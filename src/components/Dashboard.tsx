@@ -14,6 +14,12 @@ interface TaskInfo {
 }
 
 export function Dashboard() {
+  const [apiKey, setApiKey] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("ninja_api_key") || "";
+    }
+    return "";
+  });
   const [competitors, setCompetitors] = useState<string[]>([""]);
   const [selectedModules, setSelectedModules] = useState<string[]>(
     MODULES.map((m) => m.id)
@@ -21,6 +27,13 @@ export function Dashboard() {
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const saveApiKey = (value: string) => {
+    setApiKey(value);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ninja_api_key", value);
+    }
+  };
 
   const addCompetitor = () => {
     if (competitors.length < 3) {
@@ -54,7 +67,7 @@ export function Dashboard() {
 
     while (attempts < maxAttempts) {
       try {
-        const res = await fetch(`/api/result?taskId=${taskId}&wait=1`);
+        const res = await fetch(`/api/result?taskId=${taskId}&wait=1&apiKey=${encodeURIComponent(apiKey.trim())}`);
         if (!res.ok) throw new Error("Failed to poll task");
         const data = await res.json();
 
@@ -72,9 +85,13 @@ export function Dashboard() {
       attempts++;
     }
     return null;
-  }, []);
+  }, [apiKey]);
 
   const startScan = async () => {
+    if (!apiKey.trim()) {
+      setError("Enter your Ninja API key first");
+      return;
+    }
     const validCompetitors = competitors.filter((c) => c.trim().length > 0);
     if (validCompetitors.length === 0) {
       setError("Enter at least one competitor URL");
@@ -94,6 +111,7 @@ export function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          apiKey: apiKey.trim(),
           competitors: validCompetitors,
           modules: selectedModules,
         }),
@@ -151,6 +169,20 @@ export function Dashboard() {
   return (
     <>
       <section className="input-section">
+        <h2>Ninja API Key</h2>
+        <p>Enter your API key to get started (starts with nsk_)</p>
+        <div className="competitor-inputs" style={{ marginBottom: "1.5rem" }}>
+          <div className="competitor-input-row">
+            <input
+              type="password"
+              placeholder="nsk_your_api_key_here"
+              value={apiKey}
+              onChange={(e) => saveApiKey(e.target.value)}
+              style={{ fontFamily: "monospace" }}
+            />
+          </div>
+        </div>
+
         <h2>Enter Competitor URLs</h2>
         <p>Add up to 3 competitor websites to analyze (max 3)</p>
 

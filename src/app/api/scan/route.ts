@@ -10,7 +10,8 @@ function sleep(ms: number) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { competitors, modules: selectedModules } = body as {
+    const { apiKey, competitors, modules: selectedModules } = body as {
+      apiKey?: string;
       competitors: string[];
       modules: string[];
     };
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
       const batchResults = await Promise.all(
         batch.map(async ({ competitor, modId, mod }) => {
           const prompt = mod.buildPrompt(competitor);
-          const result = await createTask(prompt, mod.resultSchema);
+          const result = await createTask(prompt, mod.resultSchema, "smart", apiKey);
           return { competitor, moduleId: modId, taskId: result.taskId };
         })
       );

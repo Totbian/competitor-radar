@@ -12,21 +12,27 @@ export interface TaskResult {
   error: string | null;
 }
 
+function resolveApiKey(providedKey?: string): string {
+  const key = providedKey || process.env.NINJA_API_KEY;
+  if (!key) {
+    throw new Error("No API key provided. Enter your Ninja API key to continue.");
+  }
+  return key;
+}
+
 export async function createTask(
   prompt: string,
   resultSchema: Record<string, unknown>,
-  model: "fast" | "smart" | "super-smart" = "smart"
+  model: "fast" | "smart" | "super-smart" = "smart",
+  apiKey?: string
 ): Promise<TaskResponse> {
-  const apiKey = process.env.NINJA_API_KEY;
-  if (!apiKey) {
-    throw new Error("NINJA_API_KEY environment variable is not set");
-  }
+  const key = resolveApiKey(apiKey);
 
   const response = await fetch(`${NINJA_BASE_URL}/v0/api/task`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify({ prompt, resultSchema, model }),
   });
@@ -41,12 +47,10 @@ export async function createTask(
 
 export async function getTaskResult(
   taskId: string,
-  wait: boolean = false
+  wait: boolean = false,
+  apiKey?: string
 ): Promise<TaskResult> {
-  const apiKey = process.env.NINJA_API_KEY;
-  if (!apiKey) {
-    throw new Error("NINJA_API_KEY environment variable is not set");
-  }
+  const key = resolveApiKey(apiKey);
 
   const params = new URLSearchParams({ taskId });
   if (wait) params.set("wait", "1");
@@ -55,7 +59,7 @@ export async function getTaskResult(
     `${NINJA_BASE_URL}/v0/api/task/result?${params.toString()}`,
     {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
       },
     }
   );
