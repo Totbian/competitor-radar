@@ -39,6 +39,9 @@ export async function createTask(
 
   if (!response.ok) {
     const text = await response.text();
+    if (response.status === 401) {
+      throw new Error("Invalid API key. Check your Ninja API key and try again.");
+    }
     throw new Error(`Ninja API error (${response.status}): ${text}`);
   }
 

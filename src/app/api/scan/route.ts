@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ tasks });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message.includes("401") ? 401 : message.includes("429") ? 429 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
