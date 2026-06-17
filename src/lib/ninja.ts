@@ -20,6 +20,28 @@ function resolveApiKey(providedKey?: string): string {
   return key;
 }
 
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3
+): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, options);
+
+    if (response.status === 429 && attempt < maxRetries) {
+      // Wait with exponential backoff: 5s, 10s, 20s
+      const delay = 5000 * Math.pow(2, attempt);
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
+
+    return response;
+  }
+
+  // Should not reach here, but just in case
+  return fetch(url, options);
+}
+
 export async function createTask(
   prompt: string,
   resultSchema: Record<string, unknown>,
@@ -28,7 +50,7 @@ export async function createTask(
 ): Promise<TaskResponse> {
   const key = resolveApiKey(apiKey);
 
-  const response = await fetch(`${NINJA_BASE_URL}/v0/api/task`, {
+  const response = await fetchWithRetry(`${NINJA_BASE_URL}/v0/api/task`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

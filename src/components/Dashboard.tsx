@@ -133,6 +133,7 @@ export function Dashboard() {
       );
 
       setTasks(initialTasks);
+      setScanning(false);
 
       // Poll all tasks in parallel
       initialTasks.forEach(async (task) => {
@@ -161,7 +162,6 @@ export function Dashboard() {
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
       setScanning(false);
     }
   };

@@ -41,31 +41,20 @@ export async function POST(request: NextRequest) {
         }))
     );
 
-    // Fire tasks in batches of 8 to stay within rate limits (10 req/min)
-    const BATCH_SIZE = 8;
+    // Fire tasks one at a time to avoid concurrent_task_limit_reached
     const tasks: Array<{
       competitor: string;
       moduleId: string;
       taskId: string;
     }> = [];
 
-    for (let i = 0; i < taskRequests.length; i += BATCH_SIZE) {
-      const batch = taskRequests.slice(i, i + BATCH_SIZE);
+    for (const { competitor, modId, mod } of taskRequests) {
+      const prompt = mod.buildPrompt(competitor);
+      const result = await createTask(prompt, mod.resultSchema, "smart", apiKey);
+      tasks.push({ competitor, moduleId: modId, taskId: result.taskId });
 
-      const batchResults = await Promise.all(
-        batch.map(async ({ competitor, modId, mod }) => {
-          const prompt = mod.buildPrompt(competitor);
-          const result = await createTask(prompt, mod.resultSchema, "smart", apiKey);
-          return { competitor, moduleId: modId, taskId: result.taskId };
-        })
-      );
-
-      tasks.push(...batchResults);
-
-      // If there are more batches, wait to respect rate limits
-      if (i + BATCH_SIZE < taskRequests.length) {
-        await sleep(7000); // Wait 7s between batches
-      }
+      // Small delay between task creations to stay safe
+      await sleep(1000);
     }
 
     return NextResponse.json({ tasks });
