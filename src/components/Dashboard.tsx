@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useRef } from "react";
 import { MODULES } from "@/lib/modules";
 import { ResultCard } from "./ResultCard";
 
@@ -27,6 +27,8 @@ export function Dashboard() {
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string>("");
+  const abortRef = useRef(false);
 
   const saveApiKey = (value: string) => {
     setApiKey(value);
@@ -61,8 +63,9 @@ export function Dashboard() {
     );
   };
 
-  const pollTask = useCallback(async (taskId: string): Promise<TaskInfo | null> => {
-    const maxAttempts = 120; // 30 min max with long-poll
+  // Poll a single task until it completes
+  const waitForTask = async (taskId: string): Promise<{ status: string; result: Record<string, unknown> | null; error: string | null }> => {
+    const maxAttempts = 120;
     let attempts = 0;
 
     while (attempts < maxAttempts) {
@@ -72,10 +75,13 @@ export function Dashboard() {
         const data = await res.json();
 
         if (data.status === "completed" || data.status === "failed") {
-          return data;
+          return {
+            status: data.status,
+            result: data.result as Record<string, unknown> | null,
+            error: data.error,
+          };
         }
 
-        // Small delay between polls for pending tasks
         if (data.status === "pending") {
           await new Promise((r) => setTimeout(r, 2000));
         }
@@ -84,8 +90,30 @@ export function Dashboard() {
       }
       attempts++;
     }
-    return null;
-  }, [apiKey]);
+
+    return { status: "failed", result: null, error: "Timed out waiting for result" };
+  };
+
+  // Submit one task and return its taskId
+  const submitTask = async (competitor: string, moduleId: string): Promise<string> => {
+    const res = await fetch("/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: apiKey.trim(),
+        competitor,
+        moduleId,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to submit task");
+    }
+
+    const data = await res.json();
+    return data.taskId;
+  };
 
   const startScan = async () => {
     if (!apiKey.trim()) {
@@ -105,65 +133,68 @@ export function Dashboard() {
     setError(null);
     setScanning(true);
     setTasks([]);
+    abortRef.current = false;
 
-    try {
-      const res = await fetch("/api/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey: apiKey.trim(),
-          competitors: validCompetitors,
-          modules: selectedModules,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to start scan");
+    // Build the queue of work
+    const queue: Array<{ competitor: string; moduleId: string }> = [];
+    for (const competitor of validCompetitors) {
+      for (const moduleId of selectedModules) {
+        queue.push({ competitor, moduleId });
       }
+    }
 
-      const data = await res.json();
-      const initialTasks: TaskInfo[] = data.tasks.map(
-        (t: { competitor: string; moduleId: string; taskId: string }) => ({
-          ...t,
-          status: "pending",
+    const totalTasks = queue.length;
+
+    // Process queue sequentially: submit one task, wait for it to finish, then next
+    for (let i = 0; i < queue.length; i++) {
+      if (abortRef.current) break;
+
+      const { competitor, moduleId } = queue[i];
+      const mod = MODULES.find((m) => m.id === moduleId);
+      setProgress(`Running task ${i + 1} of ${totalTasks}: ${mod?.name || moduleId} for ${competitor}`);
+
+      try {
+        // Submit the task
+        const taskId = await submitTask(competitor, moduleId);
+
+        // Add it to the list as in_progress
+        const newTask: TaskInfo = {
+          competitor,
+          moduleId,
+          taskId,
+          status: "in_progress",
           result: null,
           error: null,
-        })
-      );
+        };
+        setTasks((prev) => [...prev, newTask]);
 
-      setTasks(initialTasks);
-      setScanning(false);
+        // Wait for it to complete before starting the next
+        const result = await waitForTask(taskId);
 
-      // Poll all tasks in parallel
-      initialTasks.forEach(async (task) => {
-        // Update to in_progress
+        // Update with the result
         setTasks((prev) =>
           prev.map((t) =>
-            t.taskId === task.taskId ? { ...t, status: "in_progress" } : t
+            t.taskId === taskId
+              ? { ...t, status: result.status, result: result.result, error: result.error }
+              : t
           )
         );
-
-        const result = await pollTask(task.taskId);
-        if (result) {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.taskId === task.taskId
-                ? {
-                    ...t,
-                    status: result.status,
-                    result: result.result as Record<string, unknown> | null,
-                    error: result.error,
-                  }
-                : t
-            )
-          );
-        }
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-      setScanning(false);
+      } catch (err) {
+        // Add as failed task
+        const failedTask: TaskInfo = {
+          competitor,
+          moduleId,
+          taskId: `failed-${i}`,
+          status: "failed",
+          result: null,
+          error: err instanceof Error ? err.message : "Unknown error",
+        };
+        setTasks((prev) => [...prev, failedTask]);
+      }
     }
+
+    setScanning(false);
+    setProgress("");
   };
 
   return (
@@ -234,12 +265,18 @@ export function Dashboard() {
           </p>
         )}
 
+        {progress && (
+          <p style={{ color: "var(--info)", fontSize: "0.85rem", marginBottom: "1rem" }}>
+            {progress}
+          </p>
+        )}
+
         <button
           className={`btn-scan ${scanning ? "scanning" : ""}`}
           onClick={startScan}
           disabled={scanning}
         >
-          {scanning ? "⏳ Launching scans..." : "🔍 Scan Competitors"}
+          {scanning ? "⏳ Scanning..." : "🔍 Scan Competitors"}
         </button>
       </section>
 
